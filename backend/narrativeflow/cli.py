@@ -20,6 +20,50 @@ def version() -> None:
     typer.echo(f"NarrativeFlow v{__version__}")
 
 
+@app.command("list")
+def list_sims() -> None:
+    """List past simulations."""
+    asyncio.run(_list_async())
+
+
+async def _list_async() -> None:
+    from pathlib import Path
+
+    from narrativeflow.config import get_settings
+    from narrativeflow.storage.database import get_connection
+
+    settings = get_settings()
+    db_path = Path(settings.db_path)
+    if not db_path.exists():
+        typer.echo("No simulations found (database does not exist).")
+        return
+
+    db = await get_connection(db_path)
+    try:
+        cursor = await db.execute(
+            "SELECT id, status, config, current_tick, created_at "
+            "FROM simulations ORDER BY created_at DESC LIMIT 20"
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await db.close()
+
+    if not rows:
+        typer.echo("No simulations found.")
+        return
+
+    typer.echo(f"{'ID':>8}  {'Status':<12} {'Tick':>5}  {'Seed Text':<40}  {'Created'}")
+    typer.echo("-" * 90)
+    for row in rows:
+        import json
+
+        config = json.loads(row[2])
+        seed = config.get("seed_text", "")[:38]
+        typer.echo(
+            f"{row[0][:8]:>8}  {row[1]:<12} {row[3]:>5}  {seed:<40}  {row[4]}"
+        )
+
+
 @app.command()
 def simulate(
     seed_text: Annotated[str, typer.Argument(help="Headline or claim to simulate")],

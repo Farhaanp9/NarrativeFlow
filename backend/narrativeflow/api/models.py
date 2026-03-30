@@ -83,3 +83,25 @@ class ReportDataResponse(BaseModel):
     final_state_counts: dict[str, int]
     total_transitions: dict[str, int]
     metrics_history: list[dict[str, object]]
+
+
+class AgentDetailResponse(BaseModel):
+    """Detailed info for a single agent."""
+
+    id: int
+    archetype_id: int
+    archetype_name: str
+    state: str
+    susceptibility: float
+    trust_threshold: float
+    influence_score: float
+    open_mindedness: float
+    emotional_reactivity: float
+    community_id: int
+    exposure_count: int
+    ticks_in_state: int
+    confidence: float
+    narrative_id: str | None = None
+    state_transitions: list[dict[str, object]] = Field(
+        default_factory=list
+    )

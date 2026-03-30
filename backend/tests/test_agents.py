@@ -36,7 +36,7 @@ def test_from_archetypes_distributes_correctly() -> None:
     influence = rng.random(n).astype(np.float32)
     communities = np.zeros(n, dtype=np.int32)
 
-    pop = AgentPopulation.from_archetypes(archetypes, n, influence, communities, rng)
+    pop = AgentPopulation.from_archetypes(archetypes, n, influence, communities, rng=rng)
 
     assert pop.n == n
     assert pop.states.shape == (n,)
@@ -58,7 +58,7 @@ def test_from_archetypes_applies_variation() -> None:
     influence = np.ones(n, dtype=np.float32) * 0.5
     communities = np.zeros(n, dtype=np.int32)
 
-    pop = AgentPopulation.from_archetypes(archetypes, n, influence, communities, rng)
+    pop = AgentPopulation.from_archetypes(archetypes, n, influence, communities, rng=rng)
 
     # Not all identical
     assert pop.susceptibility.std() > 0.01

@@ -186,8 +186,8 @@ def test_resolve_transitions_changes_states() -> None:
 
     total_s_to_m = 0
     for tick in range(10):
-        counts = resolve_transitions(pop, adj, config, 1.0, 0.6, tick, rng, "seed")
-        total_s_to_m += counts["S_to_M"]
+        result = resolve_transitions(pop, adj, config, 1.0, 0.6, tick, rng, "seed")
+        total_s_to_m += result.counts["S_to_M"]
     assert total_s_to_m > 0, "At least some S agents should become M over 10 ticks"
 
 
@@ -232,12 +232,12 @@ def test_misinfo_spreads_faster_than_truth() -> None:
     total_s_to_m = 0
     total_s_to_i = 0
     for tick in range(80):
-        counts = resolve_transitions(
+        result = resolve_transitions(
             pop, adj, config, virality=1.5, emotional_charge=0.8, tick=tick, rng=rng,
             seed_narrative_id="seed", correction_strength=0.3,
         )
-        total_s_to_m += counts["S_to_M"]
-        total_s_to_i += counts["S_to_I"]
+        total_s_to_m += result.counts["S_to_M"]
+        total_s_to_i += result.counts["S_to_I"]
 
     assert total_s_to_m > total_s_to_i, (
         f"Misinformation ({total_s_to_m}) should spread faster than truth ({total_s_to_i})"

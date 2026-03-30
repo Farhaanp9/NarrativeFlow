@@ -11,6 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from narrativeflow.api.deps import get_db, get_llm_client
 from narrativeflow.api.models import (
+    AgentDetailResponse,
     SimulationCreateRequest,
     SimulationDetail,
     SimulationStatusResponse,
@@ -24,6 +25,9 @@ from narrativeflow.llm.client import LLMClient
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/simulations", tags=["simulations"])
+
+# In-memory registry of running engines for agent inspection
+_running_engines: dict[str, SimulationEngine] = {}
 
 
 @router.post("", response_model=SimulationStatusResponse)
@@ -44,9 +48,7 @@ async def create_simulation(
     )
     await db.commit()
 
-    background_tasks.add_task(
-        _run_simulation, sim_id, req, llm
-    )
+    background_tasks.add_task(_run_simulation, sim_id, req, llm)
 
     return SimulationStatusResponse(id=sim_id, status="initializing")
 
@@ -60,6 +62,7 @@ async def _run_simulation(
     from narrativeflow.config import get_settings
 
     settings = get_settings()
+    control = ws_manager.get_control(sim_id)
 
     try:
         # 1. Generate archetypes via LLM
@@ -68,7 +71,6 @@ async def _run_simulation(
             req.seed_text, req.archetype_count
         )
 
-        # Convert to engine ArchetypeConfig
         archetypes = [
             ArchetypeConfig(
                 id=i,
@@ -108,7 +110,7 @@ async def _run_simulation(
         finally:
             await db.close()
 
-        # 2. Initialize and run simulation engine
+        # 2. Initialize engine
         logger.info("sim_starting", sim_id=sim_id)
         sim_config = SimulationConfig(
             seed_text=req.seed_text,
@@ -121,7 +123,6 @@ async def _run_simulation(
         )
         engine = SimulationEngine(sim_config)
 
-        # Extract narrative via LLM
         narrative_seed_output = await llm.extract_narrative(req.seed_text)
         from narrativeflow.engine.narratives import NarrativeSeed
 
@@ -141,13 +142,18 @@ async def _run_simulation(
 
         engine.initialize(archetypes, seed_narrative)
 
-        # Store graph data for frontend visualization
+        # Register engine for agent inspection
+        _running_engines[sim_id] = engine
+
+        # Store graph data for frontend
         if engine.graph_data is not None:
             graph_json = json.dumps({
                 "nodes": [
                     {
                         "id": i,
-                        "community": int(engine.graph_data.community_ids[i]),
+                        "community": int(
+                            engine.graph_data.community_ids[i]
+                        ),
                         "influence": float(
                             engine.graph_data.influence_scores[i]
                         ),
@@ -171,14 +177,13 @@ async def _run_simulation(
             finally:
                 await db_g.close()
 
-        # Run tick loop with WebSocket broadcast
-        tick_delay = 1.0 / req.tick_speed
+        # 3. Run tick loop with pause/resume support
+        state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
 
         async def on_tick_async(
             tick: int, metrics_dict: dict[str, object]
         ) -> None:
             await ws_manager.broadcast(sim_id, metrics_dict)
-            # Update current tick in DB periodically (every 10 ticks)
             if tick % 10 == 0:
                 db2 = await aiosqlite.connect(settings.db_path)
                 try:
@@ -192,15 +197,25 @@ async def _run_simulation(
                     await db2.close()
 
         for _ in range(sim_config.max_ticks):
+            # Wait if paused (blocks until resumed/stepped)
+            await control.wait_if_paused()
+
             metrics = engine.tick()
 
-            # Build node states for frontend graph coloring
-            state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
+            # Build node states for changed nodes
             node_states: dict[str, str] = {}
+            changed = engine.get_changed_indices()
             if engine.agents is not None:
-                for i in range(engine.agents.n):
-                    s = int(engine.agents.states[i])
-                    node_states[str(i)] = state_map.get(s, "S")
+                if metrics.tick == 1:
+                    for i in range(engine.agents.n):
+                        node_states[str(i)] = state_map.get(
+                            int(engine.agents.states[i]), "S"
+                        )
+                else:
+                    for i in changed:
+                        node_states[str(i)] = state_map.get(
+                            int(engine.agents.states[i]), "S"
+                        )
 
             metrics_dict: dict[str, object] = {
                 "tick": metrics.tick,
@@ -210,21 +225,67 @@ async def _run_simulation(
                 "active_narratives": metrics.active_narratives,
                 "dominant_narrative_id": metrics.dominant_narrative_id,
                 "node_states": node_states,
+                "hot_nodes": changed[:20],
             }
 
             await on_tick_async(metrics.tick, metrics_dict)
 
             # Store tick metrics
+            tick_record: dict[str, object] = {
+                "tick": metrics.tick,
+                "state_counts": metrics.state_counts,
+                "spread_rate": metrics.spread_rate,
+                "peak_velocity": metrics.peak_velocity,
+                "active_narratives": metrics.active_narratives,
+                "dominant_narrative_id": metrics.dominant_narrative_id,
+            }
             db3 = await aiosqlite.connect(settings.db_path)
             try:
                 await db3.execute(
                     "INSERT INTO tick_metrics "
                     "(simulation_id, tick, metrics) VALUES (?, ?, ?)",
-                    (sim_id, metrics.tick, json.dumps(metrics_dict)),
+                    (sim_id, metrics.tick, json.dumps(tick_record)),
                 )
                 await db3.commit()
             finally:
                 await db3.close()
+
+            # Narrative mutation
+            if engine.should_mutate():
+                candidates = engine.get_mutation_candidates()
+                mutations: list[tuple[ArchetypeConfig, str, str]] = []
+                new_mutations_info: list[dict[str, str]] = []
+                for m_arch, narrative_content in candidates:
+                    try:
+                        mutated = await llm.mutate_narrative(
+                            archetype_name=m_arch.name,
+                            archetype_description=m_arch.name,
+                            mutation_style=m_arch.mutation_style,
+                            narrative_content=narrative_content,
+                        )
+                        mutations.append((
+                            m_arch,
+                            mutated.content,
+                            mutated.mutation_type.value,
+                        ))
+                        new_mutations_info.append({
+                            "archetype": m_arch.name,
+                            "type": mutated.mutation_type.value,
+                            "content": mutated.content[:100],
+                        })
+                    except Exception:
+                        logger.warning(
+                            "mutation_failed",
+                            archetype=m_arch.name,
+                        )
+                if mutations:
+                    engine.apply_mutations(mutations)
+                    # Broadcast mutation event
+                    await ws_manager.broadcast(sim_id, {
+                        "type": "mutations",
+                        "tick": metrics.tick,
+                        "new_mutations": new_mutations_info,
+                    })
 
             # Check convergence
             if metrics.state_counts["S"] == 0:
@@ -235,11 +296,14 @@ async def _run_simulation(
             ):
                 break
 
+            tick_delay = 1.0 / control.speed
             await asyncio.sleep(tick_delay)
 
-        # 3. Generate report
+        # 4. Generate report
         logger.info("sim_generating_report", sim_id=sim_id)
-        final_counts = engine.agents.get_state_counts() if engine.agents else {}
+        final_counts = (
+            engine.agents.get_state_counts() if engine.agents else {}
+        )
         peak_vel = (
             engine.metrics_history[-1].peak_velocity
             if engine.metrics_history
@@ -256,7 +320,7 @@ async def _run_simulation(
             total_transitions=engine._total_transitions,
         )
 
-        # 4. Save final state
+        # 5. Save final state
         now = datetime.now(UTC).isoformat()
         db4 = await aiosqlite.connect(settings.db_path)
         try:
@@ -283,7 +347,6 @@ async def _run_simulation(
         finally:
             await db4.close()
 
-        # Broadcast completion
         await ws_manager.broadcast(sim_id, {
             "type": "completed",
             "tick": engine.current_tick,
@@ -308,6 +371,156 @@ async def _run_simulation(
             await db5.commit()
         finally:
             await db5.close()
+    finally:
+        _running_engines.pop(sim_id, None)
+        ws_manager.cleanup(sim_id)
+
+
+# --- Pause / Resume / Step endpoints ---
+
+
+@router.post("/{sim_id}/pause", response_model=SimulationStatusResponse)
+async def pause_simulation(
+    sim_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> SimulationStatusResponse:
+    """Pause a running simulation."""
+    cursor = await db.execute(
+        "SELECT status FROM simulations WHERE id = ?", (sim_id,)
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if row[0] != "running":
+        raise HTTPException(
+            status_code=400, detail=f"Cannot pause: status is {row[0]}"
+        )
+
+    control = ws_manager.get_control(sim_id)
+    control.pause()
+
+    await db.execute(
+        "UPDATE simulations SET status = ? WHERE id = ?",
+        ("paused", sim_id),
+    )
+    await db.commit()
+
+    return SimulationStatusResponse(id=sim_id, status="paused")
+
+
+@router.post("/{sim_id}/resume", response_model=SimulationStatusResponse)
+async def resume_simulation(
+    sim_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> SimulationStatusResponse:
+    """Resume a paused simulation."""
+    cursor = await db.execute(
+        "SELECT status FROM simulations WHERE id = ?", (sim_id,)
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if row[0] != "paused":
+        raise HTTPException(
+            status_code=400, detail=f"Cannot resume: status is {row[0]}"
+        )
+
+    control = ws_manager.get_control(sim_id)
+    control.resume()
+
+    await db.execute(
+        "UPDATE simulations SET status = ? WHERE id = ?",
+        ("running", sim_id),
+    )
+    await db.commit()
+
+    return SimulationStatusResponse(id=sim_id, status="running")
+
+
+@router.post("/{sim_id}/step", response_model=SimulationStatusResponse)
+async def step_simulation(
+    sim_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+) -> SimulationStatusResponse:
+    """Advance a paused simulation by one tick."""
+    cursor = await db.execute(
+        "SELECT status FROM simulations WHERE id = ?", (sim_id,)
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if row[0] != "paused":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only step when paused: status is {row[0]}",
+        )
+
+    control = ws_manager.get_control(sim_id)
+    control.step()
+
+    return SimulationStatusResponse(id=sim_id, status="paused")
+
+
+# --- Agent detail endpoint ---
+
+
+@router.get(
+    "/{sim_id}/agents/{agent_id}",
+    response_model=AgentDetailResponse,
+)
+async def get_agent_detail(
+    sim_id: str,
+    agent_id: int,
+) -> AgentDetailResponse:
+    """Get detailed info for a specific agent in a running simulation."""
+    engine = _running_engines.get(sim_id)
+    if engine is None or engine.agents is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Simulation not running or not found",
+        )
+
+    if agent_id < 0 or agent_id >= engine.agents.n:
+        raise HTTPException(
+            status_code=404, detail="Agent not found"
+        )
+
+    agents = engine.agents
+    state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
+
+    # Find archetype name
+    arch_id = int(agents.archetype_id[agent_id])
+    arch_name = "Unknown"
+    for arch in engine.archetypes:
+        if arch.id == arch_id:
+            arch_name = arch.name
+            break
+
+    return AgentDetailResponse(
+        id=agent_id,
+        archetype_id=arch_id,
+        archetype_name=arch_name,
+        state=state_map.get(int(agents.states[agent_id]), "S"),
+        susceptibility=float(agents.susceptibility[agent_id]),
+        trust_threshold=float(agents.trust_threshold[agent_id]),
+        influence_score=float(agents.influence_score[agent_id]),
+        open_mindedness=float(agents.open_mindedness[agent_id]),
+        emotional_reactivity=float(
+            agents.emotional_reactivity[agent_id]
+        ),
+        community_id=int(agents.community_id[agent_id]),
+        exposure_count=int(agents.exposure_count[agent_id]),
+        ticks_in_state=int(agents.ticks_in_state[agent_id]),
+        confidence=float(agents.confidence[agent_id]),
+        narrative_id=agents.narrative_ids[agent_id],
+        state_transitions=[
+            {"tick": t, "from": state_map.get(f, "?"), "to": state_map.get(to, "?")}
+            for t, f, to in agents.state_transitions[agent_id]
+        ],
+    )
+
+
+# --- CRUD endpoints ---
 
 
 @router.get("", response_model=list[SimulationSummary])
@@ -354,7 +567,6 @@ async def get_simulation(
 
     config = json.loads(row[2])
 
-    # Fetch report data if completed
     final_counts = None
     peak_velocity = None
     total_transitions = None
@@ -372,7 +584,6 @@ async def get_simulation(
             peak_velocity = raw.get("peak_velocity")
             total_transitions = raw.get("total_transitions")
 
-        # Fetch metrics history
         metrics_cursor = await db.execute(
             "SELECT metrics FROM tick_metrics "
             "WHERE simulation_id = ? ORDER BY tick",

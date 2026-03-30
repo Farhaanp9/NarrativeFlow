@@ -52,8 +52,17 @@ class AgentPopulation:
     exposure_count: NDArray[np.int32] = field(init=False)
     last_active_tick: NDArray[np.int32] = field(init=False)
 
+    # Network metrics (set at init from graph)
+    betweenness: NDArray[np.float32] = field(init=False)
+
+    # Emotional contagion (PRD 10.4 #4)
+    emotional_exposure: NDArray[np.float32] = field(init=False)
+
     # Narrative tracking (per agent)
     narrative_ids: list[str | None] = field(init=False)
+
+    # State transition history (PRD 8.1) — per-agent list of (tick, from, to)
+    state_transitions: list[list[tuple[int, int, int]]] = field(init=False)
 
     def __post_init__(self) -> None:
         self.susceptibility = np.zeros(self.n, dtype=np.float32)
@@ -64,6 +73,8 @@ class AgentPopulation:
         self.emotional_reactivity = np.zeros(self.n, dtype=np.float32)
         self.archetype_id = np.zeros(self.n, dtype=np.int32)
         self.community_id = np.zeros(self.n, dtype=np.int32)
+        self.betweenness = np.zeros(self.n, dtype=np.float32)
+        self.emotional_exposure = np.zeros(self.n, dtype=np.float32)
 
         self.states = np.zeros(self.n, dtype=np.int8)  # all start Susceptible
         self.confidence = np.zeros(self.n, dtype=np.float32)
@@ -71,6 +82,18 @@ class AgentPopulation:
         self.exposure_count = np.zeros(self.n, dtype=np.int32)
         self.last_active_tick = np.full(self.n, -1, dtype=np.int32)
         self.narrative_ids = [None] * self.n
+        self.state_transitions = [[] for _ in range(self.n)]
+
+    def record_transitions(
+        self,
+        mask: NDArray[np.bool_],
+        tick: int,
+        from_state: int,
+        to_state: int,
+    ) -> None:
+        """Record state transitions for agents matching the mask."""
+        for idx in np.where(mask)[0]:
+            self.state_transitions[idx].append((tick, from_state, to_state))
 
     @classmethod
     def from_archetypes(
@@ -79,6 +102,7 @@ class AgentPopulation:
         n: int,
         influence_scores: NDArray[np.float32],
         community_ids: NDArray[np.int32],
+        betweenness: NDArray[np.float32] | None = None,
         rng: np.random.Generator | None = None,
     ) -> "AgentPopulation":
         """Create a population with traits distributed by archetype percentages.
@@ -88,6 +112,7 @@ class AgentPopulation:
             n: Total population size.
             influence_scores: Per-node influence from graph centrality.
             community_ids: Per-node community assignment.
+            betweenness: Per-node betweenness centrality for network amplification.
             rng: Random number generator for reproducibility.
         """
         if rng is None:
@@ -96,6 +121,8 @@ class AgentPopulation:
         pop = cls(n)
         pop.influence_score = influence_scores.astype(np.float32)
         pop.community_id = community_ids.astype(np.int32)
+        if betweenness is not None:
+            pop.betweenness = betweenness.astype(np.float32)
 
         # Assign archetypes to agents based on population percentages
         assignments = _assign_archetypes(archetypes, n, rng)

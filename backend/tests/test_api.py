@@ -177,3 +177,144 @@ async def test_invalid_simulation_config(
         },
     )
     assert response.status_code == 422
+
+
+async def _wait_for_status(
+    client: AsyncClient, sim_id: str, target: str, max_wait: float = 30.0
+) -> str:
+    """Poll until simulation reaches target status or timeout."""
+    for _ in range(int(max_wait * 2)):
+        await asyncio.sleep(0.5)
+        resp = await client.get(f"/api/simulations/{sim_id}")
+        status = resp.json()["status"]
+        if status in (target, "completed", "failed"):
+            return status
+    return status
+
+
+async def test_pause_and_resume(client: AsyncClient) -> None:
+    """Pause a running simulation, then resume it to completion."""
+    create_resp = await client.post(
+        "/api/simulations",
+        json={
+            "seed_text": "Test pause resume flow",
+            "population_size": 30,
+            "max_ticks": 20,
+            "archetype_count": 5,
+            "tick_speed": 2.0,  # slow enough to pause
+        },
+    )
+    sim_id = create_resp.json()["id"]
+
+    # Wait for running
+    status = await _wait_for_status(client, sim_id, "running")
+    if status == "completed":
+        return  # too fast to pause, skip
+
+    # Pause
+    pause_resp = await client.post(f"/api/simulations/{sim_id}/pause")
+    assert pause_resp.status_code == 200
+    assert pause_resp.json()["status"] == "paused"
+
+    # Verify it stays paused
+    await asyncio.sleep(1)
+
+    # Resume
+    resume_resp = await client.post(f"/api/simulations/{sim_id}/resume")
+    assert resume_resp.status_code == 200
+    assert resume_resp.json()["status"] == "running"
+
+    # Wait for completion
+    status = await _wait_for_status(client, sim_id, "completed")
+    assert status == "completed"
+
+
+async def test_pause_nonexistent_returns_404(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post("/api/simulations/nonexistent/pause")
+    assert resp.status_code == 404
+
+
+async def test_step_requires_paused(client: AsyncClient) -> None:
+    """Step should only work when paused."""
+    create_resp = await client.post(
+        "/api/simulations",
+        json={
+            "seed_text": "Step test",
+            "population_size": 30,
+            "max_ticks": 50,
+            "tick_speed": 1.0,
+        },
+    )
+    sim_id = create_resp.json()["id"]
+
+    # Wait for running
+    status = await _wait_for_status(client, sim_id, "running")
+    if status != "running":
+        return
+
+    # Step should fail while running
+    step_resp = await client.post(f"/api/simulations/{sim_id}/step")
+    assert step_resp.status_code == 400
+
+    # Pause first
+    await client.post(f"/api/simulations/{sim_id}/pause")
+
+    # Now step should work
+    step_resp = await client.post(f"/api/simulations/{sim_id}/step")
+    assert step_resp.status_code == 200
+
+    # Resume to clean up
+    await client.post(f"/api/simulations/{sim_id}/resume")
+    await _wait_for_status(client, sim_id, "completed")
+
+
+async def test_agent_detail_endpoint(client: AsyncClient) -> None:
+    """GET /api/simulations/:id/agents/:agent_id returns agent info."""
+    create_resp = await client.post(
+        "/api/simulations",
+        json={
+            "seed_text": "Agent detail test",
+            "population_size": 30,
+            "max_ticks": 15,
+            "tick_speed": 2.0,
+        },
+    )
+    sim_id = create_resp.json()["id"]
+
+    # Wait for running (engine must be registered)
+    status = await _wait_for_status(client, sim_id, "running")
+    if status not in ("running", "paused"):
+        # Completed too fast — can't inspect
+        return
+
+    resp = await client.get(f"/api/simulations/{sim_id}/agents/0")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == 0
+    assert "state" in data
+    assert data["state"] in ("S", "M", "I", "R")
+    assert "archetype_name" in data
+    assert "susceptibility" in data
+    assert "state_transitions" in data
+
+    # Out of range agent should 404
+    resp = await client.get(f"/api/simulations/{sim_id}/agents/99999")
+    assert resp.status_code == 404
+
+    # Wait for completion to clean up
+    # Resume if paused
+    if status == "paused":
+        await client.post(f"/api/simulations/{sim_id}/resume")
+    await _wait_for_status(client, sim_id, "completed")
+
+
+async def test_agent_detail_404_when_not_running(
+    client: AsyncClient,
+) -> None:
+    """Agent detail should 404 for non-running simulations."""
+    resp = await client.get(
+        "/api/simulations/nonexistent/agents/0"
+    )
+    assert resp.status_code == 404

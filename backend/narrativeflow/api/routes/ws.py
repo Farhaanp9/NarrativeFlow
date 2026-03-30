@@ -11,12 +11,55 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
+class SimulationControl:
+    """Per-simulation pause/resume/speed control via asyncio primitives."""
+
+    def __init__(self) -> None:
+        self.pause_event = asyncio.Event()
+        self.pause_event.set()  # not paused initially
+        self.speed: float = 5.0
+        self.step_requested = False
+
+    def pause(self) -> None:
+        self.pause_event.clear()
+
+    def resume(self) -> None:
+        self.step_requested = False
+        self.pause_event.set()
+
+    def step(self) -> None:
+        """Allow exactly one tick then re-pause."""
+        self.step_requested = True
+        self.pause_event.set()
+
+    def set_speed(self, speed: float) -> None:
+        self.speed = max(0.1, min(100.0, speed))
+
+    async def wait_if_paused(self) -> None:
+        """Block until unpaused. Call this each tick."""
+        await self.pause_event.wait()
+        if self.step_requested:
+            self.step_requested = False
+            self.pause_event.clear()
+
+    @property
+    def is_paused(self) -> bool:
+        return not self.pause_event.is_set()
+
+
 class WebSocketManager:
-    """Manages WebSocket connections per simulation."""
+    """Manages WebSocket connections and simulation controls."""
 
     def __init__(self) -> None:
         self._connections: dict[str, list[WebSocket]] = {}
+        self._controls: dict[str, SimulationControl] = {}
         self._lock = asyncio.Lock()
+
+    def get_control(self, sim_id: str) -> SimulationControl:
+        """Get or create the control for a simulation."""
+        if sim_id not in self._controls:
+            self._controls[sim_id] = SimulationControl()
+        return self._controls[sim_id]
 
     async def connect(self, sim_id: str, ws: WebSocket) -> None:
         await ws.accept()
@@ -57,6 +100,10 @@ class WebSocketManager:
     def get_connection_count(self, sim_id: str) -> int:
         return len(self._connections.get(sim_id, []))
 
+    def cleanup(self, sim_id: str) -> None:
+        """Remove control state for a completed simulation."""
+        self._controls.pop(sim_id, None)
+
 
 # Singleton instance
 ws_manager = WebSocketManager()
@@ -67,24 +114,31 @@ async def simulation_ws(websocket: WebSocket, sim_id: str) -> None:
     """WebSocket endpoint for live simulation updates.
 
     Server → Client: TickUpdate JSON per tick
-    Client → Server: {"action": "pause"/"resume"/"set_speed", "value": ...}
+    Client → Server: {"action": "pause"/"resume"/"set_speed"/"step", "value": ...}
     """
     await ws_manager.connect(sim_id, websocket)
+    control = ws_manager.get_control(sim_id)
     try:
         while True:
-            # Listen for client commands
             data = await websocket.receive_text()
             try:
                 msg = json.loads(data)
                 action = msg.get("action")
+                if action == "pause":
+                    control.pause()
+                elif action == "resume":
+                    control.resume()
+                elif action == "step":
+                    control.step()
+                elif action == "set_speed":
+                    value = msg.get("value", 5.0)
+                    control.set_speed(float(value))
                 logger.info(
                     "ws_command",
                     simulation_id=sim_id,
                     action=action,
                 )
-                # Commands are handled by the simulation runner
-                # which checks ws_manager for pending commands
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
                 pass
     except WebSocketDisconnect:
         await ws_manager.disconnect(sim_id, websocket)

@@ -117,21 +117,39 @@ class LLMClient:
         self.model = settings.llm_model
         self._available: bool | None = None
 
-    async def _chat(self, user_prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
-        """Send a chat completion request with retry logic."""
+    async def _chat(
+        self,
+        user_prompt: str,
+        system_prompt: str = SYSTEM_PROMPT,
+        json_mode: bool = True,
+    ) -> str:
+        """Send a chat completion request with retry logic.
+
+        Args:
+            user_prompt: The user message.
+            system_prompt: The system message.
+            json_mode: If True, request JSON structured output from the LLM.
+        """
         last_error: Exception | None = None
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
         for attempt in range(MAX_RETRIES):
             try:
                 response = await self.client.chat.completions.create(
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    messages=messages,  # type: ignore[arg-type]
                     temperature=0.7,
+                    extra_body=(
+                        {"response_format": {"type": "json_object"}}
+                        if json_mode
+                        else None
+                    ),
                 )
-                content = response.choices[0].message.content
-                if content is None:
+                content: str = response.choices[0].message.content or ""
+                if not content:
                     raise ValueError("LLM returned empty content")
                 self._available = True
                 return content
@@ -144,7 +162,9 @@ class LLMClient:
                     error=str(e),
                 )
         self._available = False
-        raise RuntimeError(f"LLM call failed after {MAX_RETRIES} attempts: {last_error}")
+        raise RuntimeError(
+            f"LLM call failed after {MAX_RETRIES} attempts: {last_error}"
+        )
 
     async def extract_narrative(self, seed_text: str) -> NarrativeSeedOutput:
         """Extract structured narrative components from seed text."""
@@ -244,7 +264,9 @@ class LLMClient:
                 "misinformation spread simulation results. "
                 "Write in clear, professional markdown."
             )
-            return await self._chat(prompt, system_prompt=report_system)
+            return await self._chat(
+                prompt, system_prompt=report_system, json_mode=False
+            )
         except Exception:
             logger.warning("report_generation_fallback")
             return _generate_fallback_report(
