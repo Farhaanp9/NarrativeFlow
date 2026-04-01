@@ -1,5 +1,10 @@
 """Agent population managed as numpy arrays for vectorized computation."""
 
+from __future__ import annotations
+
+import io
+import json
+import struct
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -162,6 +167,57 @@ class AgentPopulation:
         """Increment ticks_in_state for all non-Susceptible agents."""
         non_s = self.states != S
         self.ticks_in_state[non_s] += 1
+
+    def to_bytes(self) -> bytes:
+        """Serialize the agent population to bytes for storage."""
+        buf = io.BytesIO()
+        np.savez_compressed(
+            buf,
+            states=self.states,
+            susceptibility=self.susceptibility,
+            trust_threshold=self.trust_threshold,
+            activity_rate=self.activity_rate,
+            influence_score=self.influence_score,
+            open_mindedness=self.open_mindedness,
+            emotional_reactivity=self.emotional_reactivity,
+            archetype_id=self.archetype_id,
+            community_id=self.community_id,
+            confidence=self.confidence,
+            ticks_in_state=self.ticks_in_state,
+            exposure_count=self.exposure_count,
+            last_active_tick=self.last_active_tick,
+            betweenness=self.betweenness,
+            emotional_exposure=self.emotional_exposure,
+        )
+        numpy_bytes = buf.getvalue()
+
+        meta = json.dumps({
+            "n": self.n,
+            "narrative_ids": self.narrative_ids,
+            "state_transitions": self.state_transitions,
+        }).encode("utf-8")
+
+        return struct.pack("<I", len(meta)) + meta + numpy_bytes
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> AgentPopulation:
+        """Deserialize an agent population from bytes."""
+        meta_len = struct.unpack("<I", data[:4])[0]
+        meta = json.loads(data[4 : 4 + meta_len].decode("utf-8"))
+
+        pop = cls(meta["n"])
+        buf = io.BytesIO(data[4 + meta_len :])
+        arrays = np.load(buf)
+
+        for key in arrays.files:
+            setattr(pop, key, arrays[key])
+
+        pop.narrative_ids = meta["narrative_ids"]
+        pop.state_transitions = [
+            [tuple(t) for t in transitions]
+            for transitions in meta["state_transitions"]
+        ]
+        return pop
 
 
 def _assign_archetypes(

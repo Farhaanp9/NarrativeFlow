@@ -25,6 +25,10 @@ export function TickControls({ sendMessage }: TickControlsProps) {
     );
   };
 
+  const handleStep = () => {
+    sendMessage?.(JSON.stringify({ action: "step" }));
+  };
+
   const handleSpeedChange = (value: number | readonly number[]) => {
     const newSpeed = Array.isArray(value) ? value[0] : value;
     setSpeed(newSpeed);
@@ -42,6 +46,15 @@ export function TickControls({ sendMessage }: TickControlsProps) {
         disabled={!isRunning}
       >
         {isPaused ? "Resume" : "Pause"}
+      </Button>
+
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleStep}
+        disabled={!isRunning || !isPaused}
+      >
+        Step
       </Button>
 
       <div className="flex items-center gap-2 flex-1">

@@ -334,4 +334,11 @@ def resolve_transitions(
     agents.increment_ticks_in_state()
     agents.last_active_tick[active] = tick
 
+    # 7. Update stored confidence for M agents
+    m_mask = agents.states == M
+    if np.any(m_mask):
+        agents.confidence[m_mask] = compute_confidence(
+            agents.ticks_in_state[m_mask], config.confidence_lambda
+        )
+
     return result

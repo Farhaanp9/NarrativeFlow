@@ -18,7 +18,7 @@ from narrativeflow.api.models import (
     SimulationSummary,
 )
 from narrativeflow.api.routes.ws import ws_manager
-from narrativeflow.engine.agents import ArchetypeConfig
+from narrativeflow.engine.agents import AgentPopulation, ArchetypeConfig
 from narrativeflow.engine.simulation import SimulationConfig, SimulationEngine
 from narrativeflow.llm.client import LLMClient
 
@@ -324,6 +324,12 @@ async def _run_simulation(
         now = datetime.now(UTC).isoformat()
         db4 = await aiosqlite.connect(settings.db_path)
         try:
+            if engine.agents is not None:
+                await db4.execute(
+                    "INSERT OR REPLACE INTO agent_snapshots "
+                    "(simulation_id, agent_data) VALUES (?, ?)",
+                    (sim_id, engine.agents.to_bytes()),
+                )
             await db4.execute(
                 "UPDATE simulations SET status = ?, current_tick = ?, "
                 "completed_at = ? WHERE id = ?",
@@ -471,30 +477,49 @@ async def step_simulation(
 async def get_agent_detail(
     sim_id: str,
     agent_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> AgentDetailResponse:
-    """Get detailed info for a specific agent in a running simulation."""
+    """Get detailed info for a specific agent."""
     engine = _running_engines.get(sim_id)
-    if engine is None or engine.agents is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Simulation not running or not found",
-        )
+    agents = engine.agents if engine is not None else None
 
-    if agent_id < 0 or agent_id >= engine.agents.n:
+    # Fall back to stored snapshot
+    if agents is None:
+        cursor = await db.execute(
+            "SELECT agent_data FROM agent_snapshots WHERE simulation_id = ?",
+            (sim_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Simulation not running and no snapshot available",
+            )
+        agents = AgentPopulation.from_bytes(row[0])
+
+    if agent_id < 0 or agent_id >= agents.n:
         raise HTTPException(
             status_code=404, detail="Agent not found"
         )
 
-    agents = engine.agents
     state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
 
     # Find archetype name
     arch_id = int(agents.archetype_id[agent_id])
     arch_name = "Unknown"
-    for arch in engine.archetypes:
-        if arch.id == arch_id:
-            arch_name = arch.name
-            break
+    if engine is not None:
+        for arch in engine.archetypes:
+            if arch.id == arch_id:
+                arch_name = arch.name
+                break
+    else:
+        cursor = await db.execute(
+            "SELECT name FROM archetypes WHERE simulation_id = ? AND id = ?",
+            (sim_id, arch_id),
+        )
+        row = await cursor.fetchone()
+        if row is not None:
+            arch_name = row[0]
 
     return AgentDetailResponse(
         id=agent_id,
