@@ -6,11 +6,15 @@ export default function HomePage() {
   return (
     <main className="flex-1 flex flex-col items-center justify-center p-8 gap-8">
       <div className="text-center space-y-3 max-w-2xl">
-        <h1 className="text-4xl font-bold tracking-tight">NarrativeFlow</h1>
-        <p className="text-lg text-muted-foreground">
-          Predict how misinformation spreads before it happens. Seed a scenario,
-          watch it propagate through a simulated social network, and discover
-          where interventions are most effective.
+        <h1 className="text-5xl sm:text-6xl font-bold tracking-tight text-foreground">
+          NarrativeFlow
+        </h1>
+        <p className="text-xl text-muted-foreground leading-relaxed">
+          Predict how misinformation spreads before it happens
+        </p>
+        <p className="text-sm text-muted-foreground/70">
+          Seed a scenario, watch it propagate through a simulated social network,
+          and discover where interventions are most effective.
         </p>
       </div>
 

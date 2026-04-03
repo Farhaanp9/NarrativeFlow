@@ -1,7 +1,8 @@
 # Internal planning docs (keep locally, not in repo)
-NarrativeFlow-PRD.md
-IMPLEMENTATION-PLAN.md
+*.md
 setup/
+**/*.md
+.claude/skills
 
 # Python
 __pycache__/

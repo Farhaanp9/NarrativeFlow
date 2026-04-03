@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { listSimulations } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { Clock } from "lucide-react";
 import type { SimulationSummary } from "@/lib/types";
 
 export function RecentSimulations() {
@@ -34,7 +35,8 @@ export function RecentSimulations() {
 
   return (
     <div className="w-full max-w-2xl space-y-3">
-      <h2 className="text-sm font-medium text-muted-foreground">
+      <h2 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+        <Clock className="h-4 w-4" />
         Recent Simulations
       </h2>
       <div className="space-y-2">
@@ -46,7 +48,7 @@ export function RecentSimulations() {
                 ? `/reports/${sim.id}`
                 : `/simulation/${sim.id}`
             }
-            className="flex items-center justify-between rounded-lg border border-border p-3 hover:bg-accent/50 transition-colors"
+            className="flex items-center justify-between bg-card border border-border rounded-xl p-3 hover:bg-muted transition-colors"
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm truncate">{sim.seed_text}</p>
@@ -55,7 +57,12 @@ export function RecentSimulations() {
                 tick {sim.current_tick}
               </p>
             </div>
-            <Badge variant={statusVariant(sim.status)}>{sim.status}</Badge>
+            <Badge
+              variant={statusVariant(sim.status)}
+              className={sim.status === "running" ? "animate-glow-pulse" : ""}
+            >
+              {sim.status}
+            </Badge>
           </Link>
         ))}
       </div>

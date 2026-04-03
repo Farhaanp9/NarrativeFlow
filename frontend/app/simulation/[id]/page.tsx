@@ -12,6 +12,8 @@ import { SpreadTimeline } from "@/components/simulation/SpreadTimeline";
 import { MetricsBar } from "@/components/simulation/MetricsBar";
 import { TickControls } from "@/components/simulation/TickControls";
 import { Badge } from "@/components/ui/badge";
+import { FileText, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { TickData } from "@/lib/types";
 
 const NetworkGraph = dynamic(
@@ -31,12 +33,25 @@ export default function SimulationPage() {
   const store = useSimulationStore();
 
   const { sendMessage, readyState } = useWebSocket(getWsUrl(id), {
-    onMessage: (event) => {
+    onMessage: async (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === "completed") {
           store.setStatus("completed");
-        } else if (data.tick !== undefined) {
+          // Apply final node states if present
+          if (data.node_states) {
+            store.setNodeStates(data.node_states);
+          }
+          // Re-fetch metrics history if we missed ticks
+          try {
+            const sim = await getSimulation(id);
+            if (sim.metrics_history && store.tickHistory.length < sim.metrics_history.length) {
+              store.loadMetricsHistory(sim.metrics_history);
+            }
+          } catch {
+            // best effort
+          }
+        } else if (data.tick !== undefined && data.state_counts) {
           store.appendTick(data as TickData);
           if (store.status !== "running") {
             store.setStatus("running");
@@ -62,15 +77,17 @@ export default function SimulationPage() {
 
         // Load existing metrics history for completed/reconnected sims
         if (sim.metrics_history) {
-          for (const tick of sim.metrics_history) {
-            store.appendTick(tick);
-          }
+          store.loadMetricsHistory(sim.metrics_history);
         }
 
         // Try to load graph data
         try {
           const graphData = await getGraph(id);
           store.setGraphData(graphData.nodes, graphData.edges);
+          // Apply node states if included (completed simulations)
+          if (graphData.node_states) {
+            store.setNodeStates(graphData.node_states as Record<string, string>);
+          }
         } catch {
           // Graph may not be ready yet during initialization
         }
@@ -116,24 +133,37 @@ export default function SimulationPage() {
   return (
     <main className="flex-1 flex flex-col h-screen">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-[#0A0E1A]/90 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
             NarrativeFlow
           </Link>
           <span className="text-muted-foreground">/</span>
           <span className="text-sm font-mono">{id.slice(0, 8)}</span>
-          <Badge variant={store.status === "running" ? "default" : "secondary"}>
+          <Badge
+            variant="secondary"
+            className={cn(
+              "border",
+              store.status === "running" && "animate-glow-pulse bg-green-500/20 text-green-400 border-green-500/30",
+              store.status === "completed" && "bg-blue-500/20 text-blue-400 border-blue-500/30",
+              store.status === "failed" && "bg-red-500/20 text-red-400 border-red-500/30",
+              store.status === "initializing" && "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 animate-pulse",
+            )}
+          >
             {store.status}
           </Badge>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">{connectionStatus}</span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className={cn("h-1.5 w-1.5 rounded-full", readyState === ReadyState.OPEN ? "bg-green-400" : "bg-red-400")} />
+            {connectionStatus}
+          </span>
           {store.status === "completed" && (
             <Link
               href={`/reports/${id}`}
-              className="text-sm text-primary hover:underline"
+              className="flex items-center gap-1.5 text-sm text-foreground underline underline-offset-4 hover:text-foreground/80 transition-colors"
             >
+              <FileText className="h-3.5 w-3.5" />
               View Report
             </Link>
           )}
@@ -142,7 +172,8 @@ export default function SimulationPage() {
 
       {/* Status banners */}
       {store.status === "initializing" && (
-        <div className="px-4 py-3 bg-card border-b border-border text-sm text-muted-foreground text-center animate-pulse">
+        <div className="flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-yellow-500/5 via-yellow-500/10 to-yellow-500/5 border-b border-yellow-500/10 text-sm text-yellow-400/80 text-center">
+          <Loader2 className="h-4 w-4 animate-spin" />
           Initializing simulation — generating archetypes and building network...
         </div>
       )}
@@ -155,21 +186,25 @@ export default function SimulationPage() {
       {/* Main content: 60/40 split */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-0 overflow-hidden">
         {/* Left: Network Graph */}
-        <div className="p-4 overflow-hidden">
+        <div className="overflow-hidden relative">
           <NetworkGraph />
         </div>
 
         {/* Right: Sidebar */}
-        <div className="border-l border-border p-4 space-y-4 overflow-y-auto">
+        <div className="border-l border-border p-5 space-y-5 overflow-y-auto bg-background">
           <TickControls sendMessage={sendMessage} />
 
+          <div className="h-px bg-white/5" />
+
           <div>
-            <h3 className="text-sm font-medium mb-2">Spread Timeline</h3>
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Spread Timeline</h3>
             <SpreadTimeline />
           </div>
 
+          <div className="h-px bg-white/5" />
+
           <div>
-            <h3 className="text-sm font-medium mb-2">Metrics</h3>
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Metrics</h3>
             <MetricsBar />
           </div>
         </div>

@@ -32,7 +32,7 @@ export default function NetworkGraph() {
     for (const node of graphNodes) {
       graph.addNode(String(node.id), {
         label: `Agent ${node.id}`,
-        size: 3 + node.influence * 10,
+        size: 5 + node.influence * 15,
         color: SMIR_COLORS.S,
         x: Math.random(),
         y: Math.random(),
@@ -44,19 +44,22 @@ export default function NetworkGraph() {
       const key = `${edge.source}-${edge.target}`;
       if (!graph.hasEdge(key)) {
         graph.addEdgeWithKey(key, String(edge.source), String(edge.target), {
-          color: "#334155",
-          size: 0.5,
+          color: "rgba(255, 255, 255, 0.06)",
+          size: 0.3,
         });
       }
     }
 
     // Compute layout
     forceAtlas2.assign(graph, {
-      iterations: 100,
+      iterations: 200,
       settings: {
-        gravity: 1,
-        scalingRatio: 10,
-        barnesHutOptimize: graphNodes.length > 500,
+        gravity: 5,
+        scalingRatio: 8,
+        barnesHutOptimize: true,
+        barnesHutTheta: 0.5,
+        slowDown: 5,
+        strongGravityMode: true,
       },
     });
 
@@ -65,9 +68,12 @@ export default function NetworkGraph() {
     // Create Sigma renderer
     const sigma = new Sigma(graph, containerRef.current, {
       renderLabels: false,
-      defaultEdgeColor: "#334155",
-      labelColor: { color: "#F1F5F9" },
+      renderEdgeLabels: false,
+      defaultEdgeColor: "rgba(255, 255, 255, 0.06)",
       defaultNodeColor: SMIR_COLORS.S,
+      labelColor: { color: "#E8EAF0" },
+      labelRenderedSizeThreshold: 12,
+      hideEdgesOnMove: true,
     });
 
     sigmaRef.current = sigma;
@@ -96,7 +102,7 @@ export default function NetworkGraph() {
   return (
     <div
       ref={containerRef}
-      className="w-full h-full min-h-[400px] bg-[#0F172A] rounded-lg"
+      className="w-full h-full min-h-[400px] bg-[#050810] rounded-none"
     />
   );
 }

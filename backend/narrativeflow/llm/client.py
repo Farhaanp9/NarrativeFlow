@@ -110,9 +110,12 @@ class LLMClient:
     """Unified async LLM client. Works with Ollama (local) or cloud APIs via base_url swap."""
 
     def __init__(self, settings: Settings) -> None:
+        import httpx
+
         self.client = AsyncOpenAI(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
+            http_client=httpx.AsyncClient(verify=False),
         )
         self.model = settings.llm_model
         self._available: bool | None = None

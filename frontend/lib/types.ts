@@ -73,6 +73,7 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  node_states?: Record<string, string>;
 }
 
 export interface ReportResponse {

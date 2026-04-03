@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import aiosqlite
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from narrativeflow.api.deps import get_db, get_llm_client
 from narrativeflow.api.models import (
@@ -33,7 +33,6 @@ _running_engines: dict[str, SimulationEngine] = {}
 @router.post("", response_model=SimulationStatusResponse)
 async def create_simulation(
     req: SimulationCreateRequest,
-    background_tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db),
     llm: LLMClient = Depends(get_llm_client),
 ) -> SimulationStatusResponse:
@@ -48,7 +47,7 @@ async def create_simulation(
     )
     await db.commit()
 
-    background_tasks.add_task(_run_simulation, sim_id, req, llm)
+    asyncio.create_task(_run_simulation(sim_id, req, llm))
 
     return SimulationStatusResponse(id=sim_id, status="initializing")
 
@@ -353,10 +352,19 @@ async def _run_simulation(
         finally:
             await db4.close()
 
+        # Build full node states for reconnecting clients
+        all_node_states: dict[str, str] = {}
+        if engine.agents is not None:
+            for i in range(engine.agents.n):
+                all_node_states[str(i)] = state_map.get(
+                    int(engine.agents.states[i]), "S"
+                )
+
         await ws_manager.broadcast(sim_id, {
             "type": "completed",
             "tick": engine.current_tick,
             "final_state_counts": final_counts,
+            "node_states": all_node_states,
         })
 
         logger.info(
@@ -657,7 +665,7 @@ async def get_graph(
 ) -> dict[str, object]:
     """Get the graph structure for visualization."""
     cursor = await db.execute(
-        "SELECT seed_narrative FROM simulations WHERE id = ?",
+        "SELECT seed_narrative, status FROM simulations WHERE id = ?",
         (sim_id,),
     )
     row = await cursor.fetchone()
@@ -667,4 +675,22 @@ async def get_graph(
         raise HTTPException(
             status_code=404, detail="Graph data not yet available"
         )
-    return json.loads(row[0])  # type: ignore[no-any-return]
+    graph_data = json.loads(row[0])
+
+    # Include final node states for completed simulations
+    if row[1] == "completed":
+        snap_cursor = await db.execute(
+            "SELECT agent_data FROM agent_snapshots "
+            "WHERE simulation_id = ?",
+            (sim_id,),
+        )
+        snap_row = await snap_cursor.fetchone()
+        if snap_row is not None:
+            agents = AgentPopulation.from_bytes(snap_row[0])
+            state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
+            graph_data["node_states"] = {
+                str(i): state_map.get(int(agents.states[i]), "S")
+                for i in range(agents.n)
+            }
+
+    return graph_data  # type: ignore[no-any-return]
