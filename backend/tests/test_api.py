@@ -346,3 +346,36 @@ async def test_agent_detail_after_completion_names_archetype(
         # The LLM is unreachable in tests, so archetypes are the defaults
         expected = _DEFAULT_ARCHETYPES[data["archetype_id"]]["name"]
         assert data["archetype_name"] == expected
+
+
+async def test_client_joining_mid_run_gets_current_state(
+    client: AsyncClient,
+) -> None:
+    """Graph and detail carry live node states and ticks so far while running."""
+    create_resp = await client.post(
+        "/api/simulations",
+        json={
+            "seed_text": "Join mid run",
+            "population_size": 30,
+            "max_ticks": 20,
+            "tick_speed": 5.0,
+        },
+    )
+    sim_id = create_resp.json()["id"]
+    status = await _wait_for_status(client, sim_id, "running")
+    if status != "running":
+        return  # completed too fast to observe mid-run
+
+    await client.post(f"/api/simulations/{sim_id}/pause")
+    await asyncio.sleep(0.5)
+
+    graph = (await client.get(f"/api/simulations/{sim_id}/graph")).json()
+    assert len(graph["node_states"]) == 30
+    assert set(graph["node_states"].values()) <= {"S", "M", "I", "R"}
+
+    detail = (await client.get(f"/api/simulations/{sim_id}")).json()
+    assert detail["status"] == "paused"
+    assert len(detail["metrics_history"]) >= 1
+
+    await client.post(f"/api/simulations/{sim_id}/resume")
+    await _wait_for_status(client, sim_id, "completed")

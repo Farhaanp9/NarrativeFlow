@@ -112,6 +112,10 @@ export default function SimulationPage() {
       try {
         const graphData = await getGraph(id);
         store.setGraphData(graphData.nodes, graphData.edges);
+        // Ticks that arrived before the graph only carried changes
+        if (graphData.node_states) {
+          store.setNodeStates(graphData.node_states as Record<string, string>);
+        }
         clearInterval(interval);
       } catch {
         // keep retrying

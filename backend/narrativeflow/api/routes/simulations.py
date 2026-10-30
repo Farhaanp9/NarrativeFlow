@@ -633,13 +633,14 @@ async def get_simulation(
             peak_velocity = raw.get("peak_velocity")
             total_transitions = raw.get("total_transitions")
 
-        metrics_cursor = await db.execute(
-            "SELECT metrics FROM tick_metrics "
-            "WHERE simulation_id = ? ORDER BY tick",
-            (sim_id,),
-        )
-        metrics_rows = await metrics_cursor.fetchall()
-        metrics_history = [json.loads(m[0]) for m in metrics_rows]
+    # Ticks so far, so a client that reloads mid-run can redraw its timeline
+    metrics_cursor = await db.execute(
+        "SELECT metrics FROM tick_metrics "
+        "WHERE simulation_id = ? ORDER BY tick",
+        (sim_id,),
+    )
+    metrics_rows = await metrics_cursor.fetchall()
+    metrics_history = [json.loads(m[0]) for m in metrics_rows]
 
     return SimulationDetail(
         id=row[0],
@@ -693,8 +694,12 @@ async def get_graph(
         )
     graph_data = json.loads(row[0])
 
-    # Include final node states for completed simulations
-    if row[1] == "completed":
+    # Include current node states: live ones while running (ticks only
+    # carry changes, so a client that loads the graph mid-run needs them),
+    # the final snapshot once completed
+    engine = _running_engines.get(sim_id)
+    agents = engine.agents if engine is not None else None
+    if agents is None and row[1] == "completed":
         snap_cursor = await db.execute(
             "SELECT agent_data FROM agent_snapshots "
             "WHERE simulation_id = ?",
@@ -703,10 +708,11 @@ async def get_graph(
         snap_row = await snap_cursor.fetchone()
         if snap_row is not None:
             agents = AgentPopulation.from_bytes(snap_row[0])
-            state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
-            graph_data["node_states"] = {
-                str(i): state_map.get(int(agents.states[i]), "S")
-                for i in range(agents.n)
-            }
+    if agents is not None:
+        state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
+        graph_data["node_states"] = {
+            str(i): state_map.get(int(agents.states[i]), "S")
+            for i in range(agents.n)
+        }
 
     return graph_data  # type: ignore[no-any-return]
