@@ -6,10 +6,13 @@ import io
 import json
 import struct
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import NDArray
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 # SMIR states (I is standard epidemiological notation)
 S, M, I, R = 0, 1, 2, 3  # noqa: E741
@@ -109,7 +112,7 @@ class AgentPopulation:
         community_ids: NDArray[np.int32],
         betweenness: NDArray[np.float32] | None = None,
         rng: np.random.Generator | None = None,
-    ) -> "AgentPopulation":
+    ) -> AgentPopulation:
         """Create a population with traits distributed by archetype percentages.
 
         Args:
