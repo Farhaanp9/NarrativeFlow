@@ -56,7 +56,7 @@ export function SpreadTimeline() {
   return (
     <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+        <AreaChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
           <defs>
             <linearGradient id="gradS" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={SMIR_COLORS.S} stopOpacity={0.3} />
