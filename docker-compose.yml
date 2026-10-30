@@ -5,13 +5,11 @@ services:
       - "8000:8000"
     environment:
       - NF_DB_PATH=/app/data/narrativeflow.db
-      - NF_LLM_BASE_URL=http://ollama:11434/v1
+      - NF_LLM_BASE_URL=${NF_LLM_BASE_URL:-http://ollama:11434/v1}
+      - NF_LLM_MODEL
       - NF_CORS_ORIGINS=["http://localhost:3000"]
     volumes:
       - backend-data:/app/data
-    depends_on:
-      ollama:
-        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
@@ -31,8 +29,10 @@ services:
       backend:
         condition: service_healthy
 
+  # Optional local LLM: docker compose --profile llm up
   ollama:
     image: ollama/ollama:latest
+    profiles: ["llm"]
     ports:
       - "11434:11434"
     volumes:
