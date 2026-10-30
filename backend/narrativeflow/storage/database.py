@@ -68,6 +68,21 @@ async def init_db(db_path: Path) -> None:
         await db.commit()
 
 
+async def fail_interrupted_simulations(db_path: Path) -> int:
+    """Mark simulations a previous process left unfinished as failed.
+
+    A run lives only in the process that started it, so after a restart
+    nothing will ever advance it. Returns the number of runs marked.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "UPDATE simulations SET status = 'failed' "
+            "WHERE status IN ('initializing', 'running', 'paused')"
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
 async def get_connection(db_path: Path) -> aiosqlite.Connection:
     """Return an async SQLite connection with WAL mode and foreign keys enabled."""
     db = await aiosqlite.connect(db_path)

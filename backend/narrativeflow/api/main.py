@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from narrativeflow import __version__
 from narrativeflow.config import get_settings
-from narrativeflow.storage.database import init_db
+from narrativeflow.storage.database import fail_interrupted_simulations, init_db
 
 logger = structlog.get_logger()
 
@@ -20,6 +20,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings = get_settings()
     await init_db(settings.db_path)
     logger.info("database_initialized", db_path=str(settings.db_path))
+    interrupted = await fail_interrupted_simulations(settings.db_path)
+    if interrupted:
+        logger.info("interrupted_simulations_failed", count=interrupted)
     yield
 
 

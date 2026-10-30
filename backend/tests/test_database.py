@@ -5,7 +5,11 @@ from pathlib import Path
 
 import aiosqlite
 
-from narrativeflow.storage.database import get_connection, init_db
+from narrativeflow.storage.database import (
+    fail_interrupted_simulations,
+    get_connection,
+    init_db,
+)
 
 EXPECTED_TABLES = {
     "simulations",
@@ -64,3 +68,25 @@ async def test_foreign_keys_enabled() -> None:
             assert row[0] == 1
         finally:
             await db.close()
+
+
+async def test_fail_interrupted_simulations() -> None:
+    """Runs a previous process left unfinished are marked failed; others stay."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "test.db"
+        await init_db(db_path)
+        statuses = ["initializing", "running", "paused", "completed", "failed"]
+        async with aiosqlite.connect(db_path) as db:
+            for i, status in enumerate(statuses):
+                await db.execute(
+                    "INSERT INTO simulations (id, status, config) VALUES (?, ?, '{}')",
+                    (str(i), status),
+                )
+            await db.commit()
+
+        assert await fail_interrupted_simulations(db_path) == 3
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("SELECT status FROM simulations ORDER BY id")
+            rows = [r[0] for r in await cursor.fetchall()]
+        assert rows == ["failed", "failed", "failed", "completed", "failed"]
