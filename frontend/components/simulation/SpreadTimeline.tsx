@@ -8,6 +8,7 @@ import {
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
+  type TooltipContentProps,
 } from "recharts";
 import { useSimulationStore } from "@/stores/simulationStore";
 import { SMIR_COLORS } from "@/lib/types";
@@ -19,16 +20,16 @@ const LABELS: Record<string, string> = {
   R: "Resistant",
 };
 
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload, label }: Partial<TooltipContentProps<number, string>>) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-card border border-border rounded-lg px-3 py-2 text-xs space-y-1 min-w-[140px]">
       <p className="font-mono text-muted-foreground">Tick {label}</p>
-      {payload.map((entry: any) => (
-        <div key={entry.dataKey} className="flex items-center justify-between gap-4">
+      {payload.map((entry) => (
+        <div key={String(entry.dataKey)} className="flex items-center justify-between gap-4">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
-            {LABELS[entry.dataKey] ?? entry.dataKey}
+            {LABELS[String(entry.dataKey)] ?? String(entry.dataKey)}
           </span>
           <span className="font-mono font-medium" style={{ color: entry.color }}>
             {entry.value}
