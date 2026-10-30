@@ -1,9 +1,3 @@
-# Internal planning docs (keep locally, not in repo)
-*.md
-setup/
-**/*.md
-.claude/skills
-
 # Python
 __pycache__/
 *.py[cod]
