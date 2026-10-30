@@ -7,7 +7,12 @@ import type {
   SimulationSummary,
 } from "./types";
 
-const API_BASE = "/api";
+// The browser goes through the /api rewrite. Server components cannot fetch
+// a relative URL, so they call the backend directly.
+const API_BASE =
+  typeof window === "undefined"
+    ? `${process.env.BACKEND_URL ?? "http://localhost:8000"}/api`
+    : "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init);
