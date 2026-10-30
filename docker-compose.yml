@@ -19,7 +19,10 @@ services:
       retries: 3
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
     ports:
       - "3000:3000"
     environment:
