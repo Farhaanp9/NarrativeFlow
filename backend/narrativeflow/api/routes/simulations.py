@@ -101,10 +101,6 @@ async def _run_simulation(
                         arch.population_percentage,
                     ),
                 )
-            await db.execute(
-                "UPDATE simulations SET status = ? WHERE id = ?",
-                ("running", sim_id),
-            )
             await db.commit()
         finally:
             await db.close()
@@ -175,6 +171,18 @@ async def _run_simulation(
                 await db_g.commit()
             finally:
                 await db_g.close()
+
+        # Mark running only once the engine and graph exist, so clients
+        # that see "running" can inspect agents and load the graph.
+        db_r = await aiosqlite.connect(settings.db_path)
+        try:
+            await db_r.execute(
+                "UPDATE simulations SET status = ? WHERE id = ?",
+                ("running", sim_id),
+            )
+            await db_r.commit()
+        finally:
+            await db_r.close()
 
         # 3. Run tick loop with pause/resume support
         state_map = {0: "S", 1: "M", 2: "I", 3: "R"}
