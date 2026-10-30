@@ -1,7 +1,9 @@
 """Unified async LLM client supporting Ollama (local) and cloud APIs."""
 
+import time
+
 import structlog
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI
 
 from narrativeflow.config import Settings
 from narrativeflow.llm.parser import (
@@ -105,6 +107,10 @@ _DEFAULT_NARRATIVE = {
 
 MAX_RETRIES = 3
 
+# After a call fails every retry, skip the LLM for this long and let callers
+# use their fallbacks, so a missing model costs one failed call, not one per tick.
+UNAVAILABLE_COOLDOWN_S = 60.0
+
 
 class LLMClient:
     """Unified async LLM client. Works with Ollama (local) or cloud APIs via base_url swap."""
@@ -119,6 +125,7 @@ class LLMClient:
         )
         self.model = settings.llm_model
         self._available: bool | None = None
+        self._unavailable_until = 0.0
 
     async def _chat(
         self,
@@ -133,6 +140,9 @@ class LLMClient:
             system_prompt: The system message.
             json_mode: If True, request JSON structured output from the LLM.
         """
+        if time.monotonic() < self._unavailable_until:
+            raise RuntimeError("LLM unavailable (recent failure); skipping call")
+
         last_error: Exception | None = None
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
@@ -164,7 +174,12 @@ class LLMClient:
                     max_retries=MAX_RETRIES,
                     error=str(e),
                 )
+                # The SDK has already retried the connection; an unreachable
+                # server will not answer a fourth time.
+                if isinstance(e, APIConnectionError):
+                    break
         self._available = False
+        self._unavailable_until = time.monotonic() + UNAVAILABLE_COOLDOWN_S
         raise RuntimeError(
             f"LLM call failed after {MAX_RETRIES} attempts: {last_error}"
         )
