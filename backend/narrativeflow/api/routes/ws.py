@@ -3,8 +3,11 @@
 import asyncio
 import json
 
+import aiosqlite
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from narrativeflow.config import get_settings
 
 logger = structlog.get_logger()
 
@@ -109,6 +112,20 @@ class WebSocketManager:
 ws_manager = WebSocketManager()
 
 
+async def _record_status(sim_id: str, status: str) -> None:
+    """Store a pause or resume, as the REST endpoints do, so reloads see it."""
+    db = await aiosqlite.connect(get_settings().db_path)
+    try:
+        await db.execute(
+            "UPDATE simulations SET status = ? "
+            "WHERE id = ? AND status IN ('running', 'paused')",
+            (status, sim_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 @router.websocket("/ws/simulations/{sim_id}")
 async def simulation_ws(websocket: WebSocket, sim_id: str) -> None:
     """WebSocket endpoint for live simulation updates.
@@ -126,8 +143,10 @@ async def simulation_ws(websocket: WebSocket, sim_id: str) -> None:
                 action = msg.get("action")
                 if action == "pause":
                     control.pause()
+                    await _record_status(sim_id, "paused")
                 elif action == "resume":
                     control.resume()
+                    await _record_status(sim_id, "running")
                 elif action == "step":
                     control.step()
                 elif action == "set_speed":

@@ -53,7 +53,7 @@ export default function SimulationPage() {
           }
         } else if (data.tick !== undefined && data.state_counts) {
           store.appendTick(data as TickData);
-          if (store.status !== "running") {
+          if (store.status === "initializing") {
             store.setStatus("running");
           }
         }
@@ -74,6 +74,7 @@ export default function SimulationPage() {
       try {
         const sim = await getSimulation(id);
         store.setStatus(sim.status as "initializing" | "running" | "completed" | "failed");
+        useSimulationStore.setState({ isPaused: sim.status === "paused" });
 
         // Load existing metrics history for completed/reconnected sims
         if (sim.metrics_history) {

@@ -379,3 +379,42 @@ async def test_client_joining_mid_run_gets_current_state(
 
     await client.post(f"/api/simulations/{sim_id}/resume")
     await _wait_for_status(client, sim_id, "completed")
+
+
+def test_websocket_pause_and_resume_are_recorded() -> None:
+    """Pausing over the WebSocket shows in the stored status, as REST pause does."""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from narrativeflow.api.main import app
+
+    def wait_for(tc: TestClient, sim_id: str, target: str) -> str:
+        status = ""
+        for _ in range(60):
+            status = tc.get(f"/api/simulations/{sim_id}").json()["status"]
+            if status in (target, "completed", "failed"):
+                break
+            time.sleep(0.25)
+        return status
+
+    with TestClient(app) as tc:
+        sim_id = tc.post(
+            "/api/simulations",
+            json={
+                "seed_text": "WebSocket pause",
+                "population_size": 30,
+                "max_ticks": 25,
+                "tick_speed": 5.0,
+            },
+        ).json()["id"]
+        if wait_for(tc, sim_id, "running") != "running":
+            return  # completed too fast to pause
+
+        with tc.websocket_connect(f"/ws/simulations/{sim_id}") as ws:
+            ws.send_json({"action": "pause"})
+            assert wait_for(tc, sim_id, "paused") == "paused"
+            ws.send_json({"action": "resume"})
+            assert wait_for(tc, sim_id, "running") == "running"
+
+        assert wait_for(tc, sim_id, "completed") == "completed"

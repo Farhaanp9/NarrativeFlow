@@ -15,13 +15,15 @@ export function TickControls({ sendMessage }: TickControlsProps) {
   const status = useSimulationStore((s) => s.status);
   const togglePause = useSimulationStore((s) => s.togglePause);
   const setSpeed = useSimulationStore((s) => s.setSpeed);
+  const setStatus = useSimulationStore((s) => s.setStatus);
 
-  const isRunning = status === "running";
+  const isRunning = status === "running" || status === "paused";
 
   const handlePauseToggle = () => {
     const action = isPaused ? "resume" : "pause";
     sendMessage?.(JSON.stringify({ action }));
     togglePause();
+    setStatus(isPaused ? "running" : "paused");
   };
 
   const handleStep = () => {
