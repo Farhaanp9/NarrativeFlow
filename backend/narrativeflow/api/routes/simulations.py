@@ -67,6 +67,7 @@ async def _run_simulation(
 
     settings = get_settings()
     control = ws_manager.get_control(sim_id)
+    control.set_speed(req.tick_speed)
 
     try:
         # 1. Generate archetypes via LLM

@@ -244,7 +244,7 @@ async def test_step_requires_paused(client: AsyncClient) -> None:
             "seed_text": "Step test",
             "population_size": 30,
             "max_ticks": 50,
-            "tick_speed": 1.0,
+            "tick_speed": 5.0,
         },
     )
     sim_id = create_resp.json()["id"]
