@@ -29,6 +29,9 @@ router = APIRouter(prefix="/api/simulations", tags=["simulations"])
 # In-memory registry of running engines for agent inspection
 _running_engines: dict[str, SimulationEngine] = {}
 
+# Strong references to simulation tasks; asyncio keeps only weak ones
+_simulation_tasks: set[asyncio.Task[None]] = set()
+
 
 @router.post("", response_model=SimulationStatusResponse)
 async def create_simulation(
@@ -47,7 +50,9 @@ async def create_simulation(
     )
     await db.commit()
 
-    asyncio.create_task(_run_simulation(sim_id, req, llm))
+    task = asyncio.create_task(_run_simulation(sim_id, req, llm))
+    _simulation_tasks.add(task)
+    task.add_done_callback(_simulation_tasks.discard)
 
     return SimulationStatusResponse(id=sim_id, status="initializing")
 
