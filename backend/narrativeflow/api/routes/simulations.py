@@ -535,8 +535,10 @@ async def get_agent_detail(
                 arch_name = arch.name
                 break
     else:
+        # Archetypes are stored in engine order; their row ids are global.
         cursor = await db.execute(
-            "SELECT name FROM archetypes WHERE simulation_id = ? AND id = ?",
+            "SELECT name FROM archetypes WHERE simulation_id = ? "
+            "ORDER BY id LIMIT 1 OFFSET ?",
             (sim_id, arch_id),
         )
         row = await cursor.fetchone()

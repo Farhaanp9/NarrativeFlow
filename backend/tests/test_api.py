@@ -318,3 +318,31 @@ async def test_agent_detail_404_when_not_running(
         "/api/simulations/nonexistent/agents/0"
     )
     assert resp.status_code == 404
+
+
+async def test_agent_detail_after_completion_names_archetype(
+    client: AsyncClient,
+) -> None:
+    """A completed simulation's agents resolve to their own archetype names."""
+    from narrativeflow.llm.client import _DEFAULT_ARCHETYPES
+
+    create_resp = await client.post(
+        "/api/simulations",
+        json={
+            "seed_text": "Archetype name after completion",
+            "population_size": 40,
+            "max_ticks": 10,
+            "archetype_count": 8,
+            "tick_speed": 100.0,
+        },
+    )
+    sim_id = create_resp.json()["id"]
+    assert await _wait_for_status(client, sim_id, "completed") == "completed"
+
+    for agent_id in range(10):
+        resp = await client.get(f"/api/simulations/{sim_id}/agents/{agent_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        # The LLM is unreachable in tests, so archetypes are the defaults
+        expected = _DEFAULT_ARCHETYPES[data["archetype_id"]]["name"]
+        assert data["archetype_name"] == expected
